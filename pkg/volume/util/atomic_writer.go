@@ -226,6 +226,9 @@ func (w *AtomicWriter) Write(payload map[string]FileProjection, setPerms func(su
 		return err
 	}
 
+	time.Sleep(5 * time.Minute)
+	klog.V(3).Info("sleep for test")
+
 	// (10)
 	if err = w.createUserVisibleFiles(cleanPayload); err != nil {
 		klog.Errorf("%s: error creating visible symlinks in %s: %v", w.logContext, w.targetDir, err)
