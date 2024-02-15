@@ -74,7 +74,7 @@ func (r *reflectorMetrics) loadMetrics() {
 	r.lastResourceVersion = metricsFactory.metricsProvider.NewLastResourceVersionMetric(r.name)
 }
 
-func (r *reflectorMetrics) cleanMetrics() {
+func (r *reflectorMetrics) cleanUpMetrics() {
 	// free up memory used by metrics
 	r.numberOfLists = noop
 	metricsFactory.metricsProvider.DeleteListsMetric(r.name)
@@ -153,7 +153,7 @@ func (noopMetricsProvider) DeleteWatchDurationMetric(name string)               
 func (noopMetricsProvider) NewItemsInWatchMetric(name string) HistogramMetric    { return noopMetric{} }
 func (noopMetricsProvider) DeleteItemsInWatchMetric(name string)                 {}
 func (noopMetricsProvider) NewLastResourceVersionMetric(name string) GaugeMetric { return noopMetric{} }
-func (p noopMetricsProvider) DeleteLastResourceVersionMetric(name string)        {}
+func (noopMetricsProvider) DeleteLastResourceVersionMetric(name string)          {}
 
 var metricsFactory = struct {
 	metricsProvider MetricsProvider
