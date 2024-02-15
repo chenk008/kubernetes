@@ -37,6 +37,8 @@ const (
 	//  The feature is disabled in Beta by default because
 	//  it will only be turned on for selected control plane component(s).
 	WatchListClient Feature = "WatchListClient"
+
+	InformerMetrics Feature = "InformerMetrics"
 )
 
 // defaultKubernetesFeatureGates consists of all known Kubernetes-specific feature keys.
@@ -46,4 +48,5 @@ const (
 // For more details, please see envVarFeatureGates implementation.
 var defaultKubernetesFeatureGates = map[Feature]FeatureSpec{
 	WatchListClient: {Default: false, PreRelease: Beta},
+	InformerMetrics: {Default: false, PreRelease: Alpha},
 }
