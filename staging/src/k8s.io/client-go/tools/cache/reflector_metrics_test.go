@@ -20,10 +20,13 @@ limitations under the License.
 package cache
 
 import (
+	"context"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
+	testingclock "k8s.io/utils/clock/testing"
 	"sync"
 	"testing"
 	"time"
@@ -36,8 +39,6 @@ type fakeMetric struct {
 	observedValue float64
 	observedCount int
 
-	notifyCh chan struct{}
-
 	lock sync.Mutex
 }
 
@@ -45,26 +46,17 @@ func (m *fakeMetric) Inc() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	m.inc++
-	m.notify()
 }
 func (m *fakeMetric) Observe(v float64) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	m.observedValue = v
 	m.observedCount++
-	m.notify()
 }
 func (m *fakeMetric) Set(v float64) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	m.set = v
-	m.notify()
-}
-
-func (m *fakeMetric) notify() {
-	if m.notifyCh != nil {
-		m.notifyCh <- struct{}{}
-	}
 }
 
 func (m *fakeMetric) countValue() int64 {
@@ -101,9 +93,7 @@ func (m *fakeMetric) cleanUp() {
 }
 
 func newFakeMetric() *fakeMetric {
-	return &fakeMetric{
-		notifyCh: make(chan struct{}, 9),
-	}
+	return &fakeMetric{}
 }
 
 type fakeMetricsProvider struct {
@@ -174,6 +164,8 @@ func (m *fakeMetricsProvider) DeleteLastResourceVersionMetric(name string) {
 }
 
 func TestReflectorRunMetrics(t *testing.T) {
+	fakeClock := testingclock.NewFakeClock(time.Unix(0, 0))
+
 	metricsProvider := &fakeMetricsProvider{
 		numberOfLists:        newFakeMetric(),
 		listDuration:         newFakeMetric(),
@@ -189,38 +181,82 @@ func TestReflectorRunMetrics(t *testing.T) {
 
 	stopCh := make(chan struct{})
 	store := NewStore(MetaNamespaceKeyFunc)
-	r := NewReflector(&testLW{}, &v1.Pod{}, store, 0)
-	fw := watch.NewFake()
+	r := NewReflectorWithOptions(&testLW{}, &v1.Pod{}, store, ReflectorOptions{
+		ResyncPeriod: 0,
+		Clock:        fakeClock,
+	})
+	var fw *watch.FakeWatcher
+	numberOfWatches := 0
 	r.listerWatcher = &testLW{
 		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			numberOfWatches++
+			fw = watch.NewFake()
 			return fw, nil
 		},
 		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+			fakeClock.Step(time.Millisecond)
 			return &v1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "1"}}, nil
 		},
 	}
 	go r.Run(stopCh)
-	fw.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "bar"}})
-
-	select {
-	// use a channel to ensure we don't look at the metric before it's
-	// been set.
-	case _, ok := <-metricsProvider.numberOfLists.notifyCh:
-		if ok {
-			if metricsProvider.numberOfLists.countValue() != 1 {
-				t.Errorf("reflector numberOfLists metric is not 1 ")
-			} else {
-
-			}
-
-		} else {
-
-		}
-
-	case <-time.After(time.Second):
-		t.Errorf("wait metric timeout")
-		break
+	err := wait.PollUntilContextTimeout(context.TODO(), time.Microsecond, time.Second, true, func(ctx context.Context) (bool, error) {
+		return fw != nil, nil
+	})
+	if err != nil {
+		t.Fatalf("timeout to wait reflector watch")
 	}
-	close(stopCh)
+	fw.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "bar", ResourceVersion: "3"}})
+	// ensure the add event has been handled
+	err = wait.PollUntilContextTimeout(context.TODO(), time.Microsecond, time.Second, true, func(ctx context.Context) (bool, error) {
+		return r.lastSyncResourceVersion == "3", nil
+	})
+	if err != nil {
+		t.Fatalf("timeout to wait event handled")
+	}
 
+	//numberOfLists        CounterMetric
+	//listDuration         HistogramMetric
+	//numberOfItemsInList  HistogramMetric
+	//numberOfWatchLists   CounterMetric
+	//numberOfWatches      CounterMetric
+	//numberOfShortWatches CounterMetric
+	//watchDuration        HistogramMetric
+	//numberOfItemsInWatch HistogramMetric
+	//lastResourceVersion  GaugeMetric
+
+	verifyMetricCountValue(t, metricsProvider.numberOfLists, 1, "numberOfLists")
+	verifyMetricHistogramValue(t, metricsProvider.listDuration, 0.001, "listDuration")
+	verifyMetricHistogramValue(t, metricsProvider.numberOfItemsInList, 0, "numberOfItemsInList")
+	verifyMetricCountValue(t, metricsProvider.numberOfWatches, 1, "numberOfWatches")
+	verifyMetricGaugeValue(t, metricsProvider.lastResourceVersion, 3, "lastResourceVersion")
+
+	// stop watch to verify metrics numberOfItemsInWatch
+	fw.Stop()
+	err = wait.PollUntilContextTimeout(context.TODO(), time.Microsecond, time.Second, true, func(ctx context.Context) (bool, error) {
+		return numberOfWatches > 1, nil
+	})
+	if err != nil {
+		t.Fatalf("timeout to wait reflector watch loop")
+	}
+	verifyMetricHistogramValue(t, metricsProvider.numberOfItemsInWatch, 1, "numberOfItemsInWatch")
+
+	close(stopCh)
+}
+
+func verifyMetricCountValue(t *testing.T, m *fakeMetric, expect int64, metricName string) {
+	if got := m.countValue(); got != expect {
+		t.Errorf("reflector metric %s metric expected %v, got %v", metricName, expect, got)
+	}
+}
+
+func verifyMetricHistogramValue(t *testing.T, m *fakeMetric, expect float64, metricName string) {
+	if got := m.observationValue(); got != expect {
+		t.Errorf("reflector metric %s metric expected %v, got %v", metricName, expect, got)
+	}
+}
+
+func verifyMetricGaugeValue(t *testing.T, m *fakeMetric, expect float64, metricName string) {
+	if got := m.gaugeValue(); got != expect {
+		t.Errorf("reflector metric %s metric expected %v, got %v", metricName, expect, got)
+	}
 }

@@ -371,7 +371,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 		if err != nil {
 			return err
 		}
-		r.metrics.listDuration.Observe(time.Since(start).Seconds())
+		r.metrics.listDuration.Observe(r.clock.Since(start).Seconds())
 	}
 
 	klog.V(2).Infof("Caches populated for %v from %s", r.typeDescription, r.name)
@@ -745,7 +745,7 @@ func (r *Reflector) watchHandler(start time.Time,
 	// update metrics
 	defer func() {
 		r.metrics.numberOfItemsInWatch.Observe(float64(eventCount))
-		r.metrics.watchDuration.Observe(time.Since(start).Seconds())
+		r.metrics.watchDuration.Observe(r.clock.Since(start).Seconds())
 	}()
 
 loop:
