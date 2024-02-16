@@ -214,16 +214,6 @@ func TestReflectorRunMetrics(t *testing.T) {
 		t.Fatalf("timeout to wait event handled")
 	}
 
-	//numberOfLists        CounterMetric
-	//listDuration         HistogramMetric
-	//numberOfItemsInList  HistogramMetric
-	//numberOfWatchLists   CounterMetric
-	//numberOfWatches      CounterMetric
-	//numberOfShortWatches CounterMetric
-	//watchDuration        HistogramMetric
-	//numberOfItemsInWatch HistogramMetric
-	//lastResourceVersion  GaugeMetric
-
 	verifyMetricCountValue(t, metricsProvider.numberOfLists, 1, "numberOfLists")
 	verifyMetricHistogramValue(t, metricsProvider.listDuration, 0.001, "listDuration")
 	verifyMetricHistogramValue(t, metricsProvider.numberOfItemsInList, 0, "numberOfItemsInList")
@@ -241,6 +231,32 @@ func TestReflectorRunMetrics(t *testing.T) {
 	verifyMetricHistogramValue(t, metricsProvider.numberOfItemsInWatch, 1, "numberOfItemsInWatch")
 
 	close(stopCh)
+
+	//numberOfLists        CounterMetric
+	//listDuration         HistogramMetric
+	//numberOfItemsInList  HistogramMetric
+	//numberOfWatchLists   CounterMetric
+	//numberOfWatches      CounterMetric
+	//numberOfShortWatches CounterMetric
+	//watchDuration        HistogramMetric
+	//numberOfItemsInWatch HistogramMetric
+	//lastResourceVersion  GaugeMetric
+
+	//ensure reflector metrics are deleted
+	err = wait.PollUntilContextTimeout(context.TODO(), time.Microsecond, time.Second, true, func(ctx context.Context) (bool, error) {
+		return metricsProvider.numberOfLists.countValue() == 0 &&
+			metricsProvider.listDuration.observedCount == 0 &&
+			metricsProvider.numberOfItemsInList.observedCount == 0 &&
+			metricsProvider.numberOfWatchLists.countValue() == 0 &&
+			metricsProvider.numberOfWatches.countValue() == 0 &&
+			metricsProvider.numberOfShortWatches.countValue() == 0 &&
+			metricsProvider.watchDuration.observedCount == 0 &&
+			metricsProvider.numberOfItemsInWatch.observedCount == 0 &&
+			metricsProvider.lastResourceVersion.gaugeValue() == 0, nil
+	})
+	if err != nil {
+		t.Fatalf("timeout to wait reflector metrics cleanUp")
+	}
 }
 
 func verifyMetricCountValue(t *testing.T, m *fakeMetric, expect int64, metricName string) {
