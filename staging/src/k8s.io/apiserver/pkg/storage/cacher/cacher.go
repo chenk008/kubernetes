@@ -19,8 +19,6 @@ package cacher
 import (
 	"context"
 	"fmt"
-	clientgofeaturegate "k8s.io/client-go/features"
-	reflectorMetrics "k8s.io/component-base/metrics/prometheus/reflector"
 	"net/http"
 	"reflect"
 	"sync"
@@ -44,7 +42,9 @@ import (
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/cacher/metrics"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	clientgofeaturegate "k8s.io/client-go/features"
 	"k8s.io/client-go/tools/cache"
+	reflectorMetrics "k8s.io/component-base/metrics/prometheus/reflector"
 	"k8s.io/component-base/tracing"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
