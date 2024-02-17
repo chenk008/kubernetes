@@ -167,3 +167,33 @@ func checkTransportMetrics(t *testing.T, client *clientset.Clientset) (hits int,
 	}
 	return
 }
+
+func TestAPIServerReflectorMetrics(t *testing.T) {
+	defer featuregatetesting.SetFeatureGateDuringTest(t, feature.DefaultFeatureGate, "AllAlpha", true)()
+	defer featuregatetesting.SetFeatureGateDuringTest(t, feature.DefaultFeatureGate, "AllBeta", true)()
+
+	// reset default registry metrics
+	legacyregistry.Reset()
+
+	result := kubeapiservertesting.StartTestServerOrDie(t, nil, []string{"--feature-gates", "InformerMetrics=true"}, framework.SharedEtcd())
+	defer result.TearDownFn()
+
+	client := clientset.NewForConfigOrDie(result.ClientConfig)
+
+	body, err := client.RESTClient().Get().AbsPath("/metrics").DoRaw(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, line := range strings.Split(string(body), "\n") {
+		if !strings.HasPrefix(line, "reflector") {
+			continue
+		}
+
+		output := strings.Split(line, " ")
+		if len(output) != 2 {
+			t.Fatalf("expected metrics to be in the format name value, got %v", output)
+		}
+		t.Logf("metric %s", line)
+	}
+}

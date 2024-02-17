@@ -5,9 +5,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	k8smetrics "k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
-	_ "k8s.io/component-base/metrics/prometheus/clientgo/leaderelection" // load leaderelection metrics
-	_ "k8s.io/component-base/metrics/prometheus/restclient"              // load restclient metrics
-	_ "k8s.io/component-base/metrics/prometheus/workqueue"               // load the workqueue metrics
 )
 
 const (
@@ -78,9 +75,17 @@ func init() {
 	for _, m := range metrics {
 		legacyregistry.MustRegister(m)
 	}
+	// check InformerMetrics is enabled in envVarFeatureGatesEnabled.
 	if features.FeatureGates().Enabled(features.InformerMetrics) {
-		cache.SetReflectorMetricsProvider(reflectorMetricsProvider{})
+		LoadReflectorMetrics()
 	}
+}
+
+// LoadReflectorMetrics is called when InformerMetrics is enabled
+// in kube's feature gate(i.e. command line flag). It should be called
+// before new Reflector.
+func LoadReflectorMetrics() {
+	cache.SetReflectorMetricsProvider(reflectorMetricsProvider{})
 }
 
 type reflectorMetricsProvider struct{}

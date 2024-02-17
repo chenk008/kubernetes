@@ -19,6 +19,8 @@ package cacher
 import (
 	"context"
 	"fmt"
+	clientgofeaturegate "k8s.io/client-go/features"
+	reflectorMetrics "k8s.io/component-base/metrics/prometheus/reflector"
 	"net/http"
 	"reflect"
 	"sync"
@@ -400,6 +402,9 @@ func NewCacherFromConfig(config Config) (*Cacher, error) {
 	progressRequester := newConditionalProgressRequester(config.Storage.RequestWatchProgress, config.Clock)
 	watchCache := newWatchCache(
 		config.KeyFunc, cacher.processEvent, config.GetAttrsFunc, config.Versioner, config.Indexers, config.Clock, config.GroupResource, progressRequester)
+	if clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.InformerMetrics) {
+		reflectorMetrics.LoadReflectorMetrics()
+	}
 	listerWatcher := NewListerWatcher(config.Storage, config.ResourcePrefix, config.NewListFunc)
 	reflectorName := "storage/cacher.go:" + config.ResourcePrefix
 

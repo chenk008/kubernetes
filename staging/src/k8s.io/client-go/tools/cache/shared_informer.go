@@ -19,6 +19,7 @@ package cache
 import (
 	"errors"
 	"fmt"
+	"k8s.io/apimachinery/pkg/util/naming"
 	"sync"
 	"time"
 
@@ -266,7 +267,9 @@ func NewSharedIndexInformer(lw ListerWatcher, exampleObject runtime.Object, defa
 func NewSharedIndexInformerWithOptions(lw ListerWatcher, exampleObject runtime.Object, options SharedIndexInformerOptions) SharedIndexInformer {
 	realClock := &clock.RealClock{}
 
+	informerName := naming.GetNameFromCallsite(internalPackages...)
 	return &sharedIndexInformer{
+		name:                            informerName,
 		indexer:                         NewIndexer(DeletionHandlingMetaNamespaceKeyFunc, options.Indexers),
 		processor:                       &sharedProcessor{clock: realClock},
 		listerWatcher:                   lw,
@@ -354,6 +357,9 @@ func WaitForCacheSync(stopCh <-chan struct{}, cacheSyncs ...InformerSynced) bool
 // sharedProcessor, which is responsible for relaying those
 // notifications to each of the informer's clients.
 type sharedIndexInformer struct {
+	// name identifies this reflector. By default it will be a file:line if possible.
+	name string
+
 	indexer    Indexer
 	controller Controller
 
@@ -479,6 +485,7 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 
 			Process:           s.HandleDeltas,
 			WatchErrorHandler: s.watchErrorHandler,
+			ReflectorName:     s.name,
 		}
 
 		s.controller = New(cfg)
