@@ -42,7 +42,9 @@ import (
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/cacher/metrics"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	clientgofeaturegate "k8s.io/client-go/features"
 	"k8s.io/client-go/tools/cache"
+	reflectorMetrics "k8s.io/component-base/metrics/prometheus/reflector"
 	"k8s.io/component-base/tracing"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
@@ -400,6 +402,9 @@ func NewCacherFromConfig(config Config) (*Cacher, error) {
 	progressRequester := newConditionalProgressRequester(config.Storage.RequestWatchProgress, config.Clock)
 	watchCache := newWatchCache(
 		config.KeyFunc, cacher.processEvent, config.GetAttrsFunc, config.Versioner, config.Indexers, config.Clock, config.GroupResource, progressRequester)
+	if clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.InformerMetrics) {
+		reflectorMetrics.LoadReflectorMetrics()
+	}
 	listerWatcher := NewListerWatcher(config.Storage, config.ResourcePrefix, config.NewListFunc)
 	reflectorName := "storage/cacher.go:" + config.ResourcePrefix
 
