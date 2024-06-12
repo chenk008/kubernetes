@@ -2009,7 +2009,6 @@ func (kl *Kubelet) convertToAPIContainerStatuses(pod *v1.Pod, podStatus *kubecon
 			// After kubelet restarted, respect to the last status.
 			if oldStatus != nil {
 				status.Started = oldStatus.Started
-				status.Ready = oldStatus.Ready
 			}
 		case cs.State == kubecontainer.ContainerStateCreated:
 			// containers that are created but not running are "waiting to be running"

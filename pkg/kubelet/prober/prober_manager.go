@@ -283,12 +283,27 @@ func (m *manager) isContainerStarted(pod *v1.Pod, containerStatus *v1.ContainerS
 	// 2. After the first call, probe worker has been created, probe is pending, respect to last status
 	var started = false
 	if (*containerStatus.State.Running).StartedAt.Time.Before(m.start) {
-		if containerStatus.Started != nil {
-			started = *containerStatus.Started
+		// This is a early started container, the startup probe worker not created yet.
+		hasStartupProbe := false
+		for _, container := range pod.Spec.Containers {
+			if container.Name == containerStatus.Name {
+				hasStartupProbe = container.StartupProbe != nil
+			}
+		}
+		if hasStartupProbe {
+			if containerStatus.Started != nil {
+				started = *containerStatus.Started
+			} else {
+				klog.V(3).InfoS("Early created container is running, started is nil")
+				started = false
+			}
 		} else {
-			klog.V(3).InfoS("Early created container is running, started is nil")
+			// Running container is ready
+			started = true
 		}
 	} else {
+		// If the container has startup probe, the worker already been created.
+
 		// The check whether there is a probe which hasn't run yet.
 		_, exists := m.getWorker(pod.UID, containerStatus.Name, startup)
 		started = !exists
@@ -315,22 +330,32 @@ func (m *manager) UpdatePodStatus(pod *v1.Pod, podStatus *v1.PodStatus) {
 			ready = true
 		} else {
 			if (*c.State.Running).StartedAt.Time.Before(m.start) {
-				// This is a early started container, the readiness probe worker not yet created.
-
-				// If pod has became notReady, but pod container status may still is ready.
-				// Here set this container notReady. And the readiness probe will change it.
-				podIsReady := false
-				for _, c := range pod.Status.Conditions {
-					if c.Type == v1.PodReady && c.Status == v1.ConditionTrue {
-						podIsReady = true
-						break
+				// This is a early started container, the readiness probe worker not created yet.
+				hasReadinessProbe := false
+				for _, container := range pod.Spec.Containers {
+					if container.Name == c.Name {
+						hasReadinessProbe = container.ReadinessProbe != nil
 					}
 				}
-				ready = podIsReady
+				if hasReadinessProbe {
+					// If pod has became notReady, but pod container status may still is ready.
+					// Here set this container notReady. And the readiness probe will change it.
+					podIsReady := false
+					for _, c := range pod.Status.Conditions {
+						if c.Type == v1.PodReady && c.Status == v1.ConditionTrue {
+							podIsReady = true
+							break
+						}
+					}
+					ready = podIsReady
+				} else {
+					// Started container is ready
+					ready = true
+				}
 			} else {
 				// The check whether there is a probe which hasn't run yet.
 				w, exists := m.getWorker(pod.UID, c.Name, readiness)
-				// When a container has been Running, the readiness probe worker always been created.
+				// When a container has started, the readiness probe worker already been created.
 				ready = !exists // no readinessProbe -> always ready
 				if exists {
 					// Trigger an immediate run of the readinessProbe to update ready state
