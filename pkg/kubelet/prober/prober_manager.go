@@ -276,14 +276,41 @@ func (m *manager) isContainerStarted(pod *v1.Pod, containerStatus *v1.ContainerS
 		return result == results.Success
 	}
 
-	// if there is a startup probe which hasn't run yet, the container is not
-	// started.
-	if _, exists := m.getWorker(pod.UID, containerStatus.Name, startup); exists {
-		return false
+	// Respect to early started pod status. pod created before kubelet start:
+	// 1. The first call `UpdatePodStatus`, probe worker has not created,
+	// 1.1 last status is not nil, respect to last status
+	// 1.2 last status is nil, set started to false
+	// 2. After the first call, probe worker has been created, probe is pending, respect to last status
+	var started = false
+	if (*containerStatus.State.Running).StartedAt.Time.Before(m.start) {
+		// This is a early started container, the startup probe worker not created yet.
+		hasStartupProbe := false
+		for _, container := range pod.Spec.Containers {
+			if container.Name == containerStatus.Name {
+				hasStartupProbe = container.StartupProbe != nil
+			}
+		}
+		if hasStartupProbe {
+			if containerStatus.Started != nil {
+				started = *containerStatus.Started
+			} else {
+				klog.V(3).InfoS("Early created container is running, started is nil")
+				started = false
+			}
+		} else {
+			// Running container is ready
+			started = true
+		}
+	} else {
+		// If the container has startup probe, the worker already been created.
+
+		// The check whether there is a probe which hasn't run yet.
+		_, exists := m.getWorker(pod.UID, containerStatus.Name, startup)
+		started = !exists
 	}
 
 	// there is no startup probe, so the container is started.
-	return true
+	return started
 }
 
 func (m *manager) UpdatePodStatus(pod *v1.Pod, podStatus *v1.PodStatus) {
@@ -292,6 +319,7 @@ func (m *manager) UpdatePodStatus(pod *v1.Pod, podStatus *v1.PodStatus) {
 		podStatus.ContainerStatuses[i].Started = &started
 
 		if !started {
+			podStatus.ContainerStatuses[i].Ready = false
 			continue
 		}
 
@@ -301,17 +329,44 @@ func (m *manager) UpdatePodStatus(pod *v1.Pod, podStatus *v1.PodStatus) {
 		} else if result, ok := m.readinessManager.Get(kubecontainer.ParseContainerID(c.ContainerID)); ok && result == results.Success {
 			ready = true
 		} else {
-			// The check whether there is a probe which hasn't run yet.
-			w, exists := m.getWorker(pod.UID, c.Name, readiness)
-			ready = !exists // no readinessProbe -> always ready
-			if exists {
-				// Trigger an immediate run of the readinessProbe to update ready state
-				select {
-				case w.manualTriggerCh <- struct{}{}:
-				default: // Non-blocking.
-					klog.InfoS("Failed to trigger a manual run", "probe", w.probeType.String())
+			if (*c.State.Running).StartedAt.Time.Before(m.start) {
+				// This is a early started container, the readiness probe worker not created yet.
+				hasReadinessProbe := false
+				for _, container := range pod.Spec.Containers {
+					if container.Name == c.Name {
+						hasReadinessProbe = container.ReadinessProbe != nil
+					}
+				}
+				if hasReadinessProbe {
+					// If pod has became notReady, but pod container status may still is ready.
+					// Here set this container notReady. And the readiness probe will change it.
+					podIsReady := false
+					for _, c := range pod.Status.Conditions {
+						if c.Type == v1.PodReady && c.Status == v1.ConditionTrue {
+							podIsReady = true
+							break
+						}
+					}
+					ready = podIsReady
+				} else {
+					// Started container is ready
+					ready = true
+				}
+			} else {
+				// The check whether there is a probe which hasn't run yet.
+				w, exists := m.getWorker(pod.UID, c.Name, readiness)
+				// When a container has started, the readiness probe worker already been created.
+				ready = !exists // no readinessProbe -> always ready
+				if exists {
+					// Trigger an immediate run of the readinessProbe to update ready state
+					select {
+					case w.manualTriggerCh <- struct{}{}:
+					default: // Non-blocking.
+						klog.InfoS("Failed to trigger a manual run", "probe", w.probeType.String())
+					}
 				}
 			}
+
 		}
 		podStatus.ContainerStatuses[i].Ready = ready
 	}

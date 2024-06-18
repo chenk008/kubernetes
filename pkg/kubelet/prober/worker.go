@@ -226,11 +226,33 @@ func (w *worker) doProbe(ctx context.Context) (keepGoing bool) {
 	}
 
 	if w.containerID.String() != c.ContainerID {
+		probeResult := w.initialValue
+		if w.containerID.IsEmpty() {
+			// After kubelet restarted, respect to the last status
+			if c.State.Running != nil && (*c.State.Running).StartedAt.Time.Before(w.probeManager.start) {
+				switch w.probeType {
+				case readiness:
+					if c.Ready {
+						probeResult = results.Success
+					} else {
+						probeResult = results.Failure
+					}
+				case startup:
+					if c.Started != nil && *c.Started {
+						probeResult = results.Success
+					}
+				default:
+				}
+				klog.V(3).InfoS("Pod has started before, set probeResult",
+					"probeType", w.probeType, "pod", klog.KObj(w.pod), "containerName", w.container.Name, "probeResult", probeResult)
+			}
+		}
+
 		if !w.containerID.IsEmpty() {
 			w.resultsManager.Remove(w.containerID)
 		}
 		w.containerID = kubecontainer.ParseContainerID(c.ContainerID)
-		w.resultsManager.Set(w.containerID, w.initialValue, w.pod)
+		w.resultsManager.Set(w.containerID, probeResult, w.pod)
 		// We've got a new container; resume probing.
 		w.onHold = false
 	}
@@ -273,6 +295,7 @@ func (w *worker) doProbe(ctx context.Context) (keepGoing bool) {
 	if c.Started != nil && *c.Started {
 		// Stop probing for startup once container has started.
 		// we keep it running to make sure it will work for restarted container.
+		// After kubelet restarted, respect to the last `Started`, startup probe may not run.
 		if w.probeType == startup {
 			return true
 		}
